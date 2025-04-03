@@ -19,10 +19,7 @@ xor ax, ax                      ; Clear ax register, though it should be empty
 mov ds, ax                      ; Set ds to 0
 mov es, ax                      ; Set es to 0
 mov ss, ax                      ; Set ss to 0
-mov sp, 0x7c00                  ; Set stack pointer just below bootloader
-
-; Need interrupts again for printing
-sti
+mov sp, 0x9000                  ; Set stack pointer just below bootloader
 
 ; Print msg to confirm we made it this far
 mov si, stage1_msg
@@ -31,11 +28,14 @@ call ps_16                      ; Call print string 16bit
 ; Enable A20 line
 call enable_a20
 
+jmp $
+
 ; === 16-bit Functions ===
 ps_16:
-    pusha                       ; Save registers
-
-
+    ; Input: SI points to null-terminated string
+    ; Preserves: AX, SI
+    pusha             ; Save all registers
+    
 .loop:
     lodsb             ; Load byte at SI into AL and increment SI
     or al, al         ; Test if character is 0 (end of string)
