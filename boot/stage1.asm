@@ -1,53 +1,70 @@
-; boot/stage1.asm
-; !THIS FILE WILL BE COMPILED INTO A FLAT BINARY!
-
 [bits 16]
 [org 0x7c00]
 
-; Jump to code
 jmp main
 
-; === Data ===
-stage1_msg db 'Now In: 16 bit Real Mode', 0x0d, 0x0a, 0
+; Data
+msg_16 db 'HssOS Bootloader Starting...', 0
+leaving_16 db 'Leaving Real Mode...', 0
 
-; === Main ===
+; GDT
+align 8
+gdt_start:
+    dq 0x0                 ; Null descriptor
+
+    ; Code segment (0x08)
+    dw 0xffff             ; Limit (0-15)
+    dw 0x0000             ; Base (0-15)
+    db 0x00               ; Base (16-23)
+    db 10011010b          ; Access byte
+    db 11001111b          ; Flags + Limit (16-19)
+    db 0x00               ; Base (24-31)
+
+    ; Data segment (0x10)
+    dw 0xffff             ; Limit (0-15)
+    dw 0x0000             ; Base (0-15)
+    db 0x00               ; Base (16-23)
+    db 10010010b          ; Access byte
+    db 11001111b          ; Flags + Limit (16-19)
+    db 0x00               ; Base (24-31)
+gdt_end:
+
+gdt_descriptor:
+    dw gdt_end - gdt_start - 1
+    dd gdt_start
+
+CODE_SEG equ 0x08
+DATA_SEG equ 0x10
+
 main:
-; Disable interrupts for sanity
-cli
+    cli
+    ; Set up real-mode stack
+    mov ax, 0x0000
+    mov ss, ax
+    mov sp, 0x7C00        ; Stack grows downwards from 0x7C00
 
-xor ax, ax                      ; Clear ax register, though it should be empty
-mov ds, ax                      ; Set ds to 0
-mov es, ax                      ; Set es to 0
-mov ss, ax                      ; Set ss to 0
-mov sp, 0x9000                  ; Set stack pointer just below bootloader
+    mov si, msg_16
+    call ps_16
 
-; Print msg to confirm we made it this far
-mov si, stage1_msg
-call ps_16                      ; Call print string 16bit
+    call enable_a20
+    call real_to_prot
 
-; Enable A20 line
-call enable_a20
+    ; This code is unreachable
+    jmp $
+    hlt
 
-jmp $
-
-; === 16-bit Functions ===
 ps_16:
-    ; Input: SI points to null-terminated string
-    ; Preserves: AX, SI
-    pusha             ; Save all registers
-    
+    pusha
+    mov ah, 0x0E
 .loop:
-    lodsb             ; Load byte at SI into AL and increment SI
-    or al, al         ; Test if character is 0 (end of string)
-    jz .done          ; If zero, we're done
-    
-    mov ah, 0x0E      ; BIOS teletype function
-    int 0x10          ; Call BIOS
-    jmp .loop         ; Repeat for next character
-    
+    lodsb
+    test al, al
+    jz .done
+    int 0x10
+    jmp .loop
 .done:
-    popa              ; Restore all registers
-    ret               ; Return to caller
+    popa
+    ret
 
 enable_a20:
     in al, 0x92
@@ -55,5 +72,34 @@ enable_a20:
     out 0x92, al
     ret
 
-times 510 - ($ - $$) db 0
-dw 0xaa55
+real_to_prot:
+    mov si, leaving_16    ; Print message before switching
+    call ps_16
+
+    cli
+    lgdt [gdt_descriptor]
+
+    mov eax, cr0
+    or eax, 1
+    mov cr0, eax
+
+    jmp CODE_SEG:protected_mode  ; Far jump to 32-bit code
+
+[bits 32]
+protected_mode:
+    ; Initialize data segments
+    mov ax, DATA_SEG
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    ; Set up protected mode stack
+    mov esp, 0x8000       ; Stack top at 0x8000
+
+    ; Add 32-bit code here (e.g., kernel load)
+    jmp $                 ; Halt
+
+times 510-($-$$) db 0
+dw 0xAA55
