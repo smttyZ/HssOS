@@ -3,6 +3,10 @@
 
 jmp main
 
+kernel_bin db 0x00, 0x00, ...   ; The binary content of kernel.bin (insert in the hex format)
+kernel_bin_size equ <size_in_bytes>
+
+
 ; Data
 msg_16 db 'HssOS Bootloader Starting...', 0
 leaving_16 db 'Leaving Real Mode...', 0
@@ -49,6 +53,15 @@ main:
     call enable_a20
     call real_to_prot
 
+    ; Load kernel at 0x1000
+    mov si, kernel_bin
+    mov di, 0x1000   ; Destination address in memory
+    mov cx, kernel_bin_size / 512   ; Total sectors to read
+    call load_kernel
+
+    ; Jump to the kernel entry point (0x1000)
+    jmp 0x1000
+
     ; This code is unreachable
     jmp $
     hlt
@@ -85,6 +98,41 @@ real_to_prot:
 
     jmp CODE_SEG:protected_mode  ; Far jump to 32-bit code
 
+lba_to_chs:
+    ; Inputs:
+    ;   AX = LBA
+    ; Outputs:
+    ;   CH = Cylinder
+    ;   DH = Head
+    ;   CL = Sector
+    ; Clobbers: AX, BX, CX, DX
+
+    xor dx, dx          
+    mov bx, 36           ; heads * sectors = 2 * 18
+    div bx               ; AX / 36 → AX = cylinder, DX = remainder
+    mov ch, al           ; CH = cylinder
+
+    mov ax, dx           ; remainder → AX (we divide it again)
+    xor dx, dx
+    mov bx, 18           ; sectors per track
+    div bx               ; AX / 18 → AX = head, DX = sector (0-based)
+    mov dh, al           ; DH = head
+    inc dl               ; sector = remainder + 1
+    mov cl, dl           ; CL = sector
+
+    ret
+
+load_kernel:
+    pusha
+    ; Read kernel from disk into memory
+    mov ah, 0x02    ; INT 0x13 read sector function
+    mov al, 1       ; Number of sectors
+    mov bx, di      ; Destination address
+    mov dl, 0x80    ; Drive number (floppy or hard disk)
+    int 0x13
+    popa
+    ret
+
 [bits 32]
 protected_mode:
     ; Initialize data segments
@@ -100,6 +148,8 @@ protected_mode:
 
     ; Add 32-bit code here (e.g., kernel load)
     jmp $                 ; Halt
+
+kernel_bin_size equ <insert_size_of_kernel_here>
 
 times 510-($-$$) db 0
 dw 0xAA55
