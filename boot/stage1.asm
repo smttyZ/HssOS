@@ -1,155 +1,196 @@
 [bits 16]
-[org 0x7c00]
+[org 0x7c00]  ; BIOS loads bootloader at 0x7C00
 
-jmp main
+; Jump over BPB area (important for some BIOSes)
+jmp start
+nop
+times 33 db 0    ; BPB (BIOS Parameter Block) area
 
-kernel_bin db 0x00, 0x00, ...   ; The binary content of kernel.bin (insert in the hex format)
-kernel_bin_size equ <size_in_bytes>
+start:
+    ; Clear interrupts during setup
+    cli 
 
-
-; Data
-msg_16 db 'HssOS Bootloader Starting...', 0
-leaving_16 db 'Leaving Real Mode...', 0
-
-; GDT
-align 8
-gdt_start:
-    dq 0x0                 ; Null descriptor
-
-    ; Code segment (0x08)
-    dw 0xffff             ; Limit (0-15)
-    dw 0x0000             ; Base (0-15)
-    db 0x00               ; Base (16-23)
-    db 10011010b          ; Access byte
-    db 11001111b          ; Flags + Limit (16-19)
-    db 0x00               ; Base (24-31)
-
-    ; Data segment (0x10)
-    dw 0xffff             ; Limit (0-15)
-    dw 0x0000             ; Base (0-15)
-    db 0x00               ; Base (16-23)
-    db 10010010b          ; Access byte
-    db 11001111b          ; Flags + Limit (16-19)
-    db 0x00               ; Base (24-31)
-gdt_end:
-
-gdt_descriptor:
-    dw gdt_end - gdt_start - 1
-    dd gdt_start
-
-CODE_SEG equ 0x08
-DATA_SEG equ 0x10
-
-main:
-    cli
-    ; Set up real-mode stack
-    mov ax, 0x0000
-    mov ss, ax
-    mov sp, 0x7C00        ; Stack grows downwards from 0x7C00
-
-    mov si, msg_16
-    call ps_16
-
-    call enable_a20
-    call real_to_prot
-
-    ; Load kernel at 0x1000
-    mov si, kernel_bin
-    mov di, 0x1000   ; Destination address in memory
-    mov cx, kernel_bin_size / 512   ; Total sectors to read
-    call load_kernel
-
-    ; Jump to the kernel entry point (0x1000)
-    jmp 0x1000
-
-    ; This code is unreachable
-    jmp $
-    hlt
-
-ps_16:
-    pusha
-    mov ah, 0x0E
-.loop:
-    lodsb
-    test al, al
-    jz .done
-    int 0x10
-    jmp .loop
-.done:
-    popa
-    ret
-
-enable_a20:
-    in al, 0x92
-    or al, 2
-    out 0x92, al
-    ret
-
-real_to_prot:
-    mov si, leaving_16    ; Print message before switching
-    call ps_16
-
-    cli
-    lgdt [gdt_descriptor]
-
-    mov eax, cr0
-    or eax, 1
-    mov cr0, eax
-
-    jmp CODE_SEG:protected_mode  ; Far jump to 32-bit code
-
-lba_to_chs:
-    ; Inputs:
-    ;   AX = LBA
-    ; Outputs:
-    ;   CH = Cylinder
-    ;   DH = Head
-    ;   CL = Sector
-    ; Clobbers: AX, BX, CX, DX
-
-    xor dx, dx          
-    mov bx, 36           ; heads * sectors = 2 * 18
-    div bx               ; AX / 36 → AX = cylinder, DX = remainder
-    mov ch, al           ; CH = cylinder
-
-    mov ax, dx           ; remainder → AX (we divide it again)
-    xor dx, dx
-    mov bx, 18           ; sectors per track
-    div bx               ; AX / 18 → AX = head, DX = sector (0-based)
-    mov dh, al           ; DH = head
-    inc dl               ; sector = remainder + 1
-    mov cl, dl           ; CL = sector
-
-    ret
-
-load_kernel:
-    pusha
-    ; Read kernel from disk into memory
-    mov ah, 0x02    ; INT 0x13 read sector function
-    mov al, 1       ; Number of sectors
-    mov bx, di      ; Destination address
-    mov dl, 0x80    ; Drive number (floppy or hard disk)
-    int 0x13
-    popa
-    ret
-
-[bits 32]
-protected_mode:
-    ; Initialize data segments
-    mov ax, DATA_SEG
+    ; Set up segment registers
+    xor ax, ax
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
     mov ss, ax
+    mov sp, 0x7C00  ; Set up stack
 
-    ; Set up protected mode stack
-    mov esp, 0x8000       ; Stack top at 0x8000
+    ; Reenable interrupts
+    sti
 
-    ; Add 32-bit code here (e.g., kernel load)
-    jmp $                 ; Halt
+    ; Print a message
+    mov si, msg_boot
+    call print_msg
 
-kernel_bin_size equ <insert_size_of_kernel_here>
+    ; Load kernel
+    mov si, msg_load
+    call print_msg
+    call load_kernel
 
-times 510-($-$$) db 0
-dw 0xAA55
+    ; Switch to protected mode
+    mov si, msg_prot
+    call print_msg
+    call switch_to_pm
+
+; -------------------------------------------------
+; Helper functions
+; -------------------------------------------------
+
+; Print message
+; SI = null-terminated string
+print_msg:
+    pusha
+    mov ah, 0x0E  ; BIOS teletype function
+.loop:
+    lodsb          ; Load byte at SI into AL
+    test al, al    ; Check if AL is 0 (end of string)
+    jz .done
+    int 0x10       ; Print character in AL
+    jmp .loop
+.done:
+    popa
+    ret
+
+; Load kernel from disk sectors
+load_kernel:
+    pusha
+    
+    ; Reset the disk system
+    xor ah, ah
+    int 0x13
+    
+    ; Read kernel into memory
+    mov ax, 0x0000     ; ES:BX = 0x0000:0x1000 = physical 0x1000
+    mov es, ax
+    mov bx, 0x1000     ; Load kernel at 0x1000
+    
+    mov ah, 0x02       ; BIOS read sectors function
+    mov al, 8          ; Number of sectors to read (4KB)
+    mov ch, 0          ; Cylinder 0
+    mov cl, 2          ; Start from sector 2 (bootloader = sector 1)
+    mov dh, 0          ; Head 0
+    mov dl, 0          ; Drive 0 (floppy)
+    
+    int 0x13           ; Call BIOS
+    jc disk_error      ; Check for error (carry flag)
+    
+    cmp al, 8          ; Make sure we read all sectors
+    jne disk_error
+    
+    ; Reset ES to 0
+    xor ax, ax
+    mov es, ax
+    
+    popa
+    ret
+
+disk_error:
+    mov si, msg_disk_error
+    call print_msg
+    jmp $  ; Infinite loop
+
+; -------------------------------------------------
+; GDT (Global Descriptor Table)
+; -------------------------------------------------
+gdt_start:
+    ; Null descriptor (required)
+    dd 0x0, 0x0
+
+    ; Code segment descriptor
+    dw 0xFFFF    ; Limit (bits 0-15)
+    dw 0x0000    ; Base (bits 0-15)
+    db 0x00      ; Base (bits 16-23)
+    db 10011010b ; Access byte
+    db 11001111b ; Flags + Limit (bits 16-19)
+    db 0x00      ; Base (bits 24-31)
+
+    ; Data segment descriptor
+    dw 0xFFFF    ; Limit (bits 0-15) 
+    dw 0x0000    ; Base (bits 0-15)
+    db 0x00      ; Base (bits 16-23)
+    db 10010010b ; Access byte
+    db 11001111b ; Flags + Limit (bits 16-19)
+    db 0x00      ; Base (bits 24-31)
+gdt_end:
+
+gdt_descriptor:
+    dw gdt_end - gdt_start - 1  ; GDT size (one less than true size)
+    dd gdt_start                ; GDT address
+
+; Define segment selectors
+CODE_SEG equ 8     ; Offset of code segment in GDT
+DATA_SEG equ 16    ; Offset of data segment in GDT
+
+; -------------------------------------------------
+; Switch to protected mode
+; -------------------------------------------------
+switch_to_pm:
+    cli                     ; Disable interrupts
+    lgdt [gdt_descriptor]   ; Load GDT
+    
+    ; Set the Protected Mode bit in CR0
+    mov eax, cr0
+    or eax, 1
+    mov cr0, eax
+    
+    ; Far jump to 32-bit code segment to flush pipeline
+    jmp CODE_SEG:init_pm
+
+; -------------------------------------------------
+; 32-bit code
+; -------------------------------------------------
+[bits 32]
+init_pm:
+    ; Update segment registers
+    mov ax, DATA_SEG    ; Data segment selector
+    mov ds, ax
+    mov ss, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    
+    ; Set up stack
+    mov ebp, 0x90000    ; Base pointer at top of free memory
+    mov esp, 0x90000    ; Stack pointer at top of free memory
+    
+    ; Clear screen
+    mov ecx, 80 * 25    ; Screen has 80x25 characters  
+    mov edi, 0xB8000    ; Start of video memory
+    mov ax, 0x0720      ; Normal attribute (0x07), space character (0x20)
+    rep stosw           ; Repeat Store Word - fills screen with spaces
+    
+    ; Print 'PM' at top left to show we're in protected mode
+    mov edi, 0xB8000
+    mov byte [edi], 'P'
+    mov byte [edi+1], 0x0F    ; White on black
+    mov byte [edi+2], 'M'
+    mov byte [edi+3], 0x0F    ; White on black
+    
+    ; Zero all general purpose registers to ensure clean state
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    
+    ; Jump to kernel at 0x1000
+    jmp CODE_SEG:0x1000
+
+; -------------------------------------------------
+; Data
+; -------------------------------------------------
+msg_boot:      db 'Booting HssOS...', 13, 10, 0
+msg_load:      db 'Loading kernel...', 13, 10, 0
+msg_prot:      db 'Switching to protected mode...', 13, 10, 0
+msg_disk_error:db 'Error loading kernel from disk!', 13, 10, 0
+
+; -------------------------------------------------
+; Boot signature
+; -------------------------------------------------
+times 510-($-$$) db 0   ; Pad to 510 bytes
+dw 0xAA55               ; Boot signature
