@@ -1,7 +1,5 @@
 # Variables
 ASM := nasm
-CC := x86_64-elf-gcc
-CFLAGS := -ffreestanding -O0 -g -Wall -Wextra -std=c99 -m32 -fno-pie
 QEMU := qemu-system-x86_64
 STAGE1_SRC := boot/stage1.asm
 STAGE1_OUT := out/stage1.bin
@@ -12,21 +10,37 @@ DISK_IMG := out/disk.img
 BOOTLOADER_SIZE := 512
 DISK_SIZE := 1440K  # Standard floppy size
 
+# OS detection for compiler selection
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS specific settings
+    CC := x86_64-elf-gcc
+else
+    # Linux (Ubuntu/WSL2) specific settings
+    CC := gcc
+endif
+
+# Common compiler flags for both environments
+CFLAGS := -ffreestanding -O0 -g -Wall -Wextra -std=c99 -m32 -fno-pie -nostdlib -fno-stack-protector
+
 # Main target
 all: $(DISK_IMG) run
 
+# Create output directory if it doesn't exist
+out:
+	mkdir -p out
+
 # Assemble bootloader
-$(STAGE1_OUT): $(STAGE1_SRC)
-	@mkdir -p out
+$(STAGE1_OUT): $(STAGE1_SRC) | out
 	$(ASM) -f bin $(STAGE1_SRC) -o $(STAGE1_OUT)
 
 # Compile the kernel C code
-$(KERNEL_OBJ): $(KERNEL_SRC)
+$(KERNEL_OBJ): $(KERNEL_SRC) | out
 	$(CC) $(CFLAGS) -c $(KERNEL_SRC) -o $(KERNEL_OBJ)
 
 # Link the kernel
-$(KERNEL_BIN): $(KERNEL_OBJ)
-	$(CC) -T linker.ld $(CFLAGS) -nostdlib $(KERNEL_OBJ) -o $(KERNEL_BIN)
+$(KERNEL_BIN): $(KERNEL_OBJ) linker.ld
+	$(CC) -T linker.ld $(CFLAGS) -o $(KERNEL_BIN) $(KERNEL_OBJ)
 	objdump -d $(KERNEL_BIN) > out/kernel.dump
 	objdump -h $(KERNEL_BIN) > out/kernel_headers.dump
 
@@ -57,6 +71,18 @@ gdb-debug: $(DISK_IMG)
 
 # Clean build artifacts
 clean:
-	rm -rf out $(DISK_IMG)
+	rm -rf out
 
-.PHONY: all run debug gdb-debug clean
+# Install dependencies based on the OS
+setup:
+ifeq ($(UNAME_S),Darwin)
+	@echo "Installing dependencies for macOS..."
+	@echo "You need to have brew installed"
+	brew install nasm qemu x86_64-elf-gcc x86_64-elf-binutils
+else
+	@echo "Installing dependencies for Ubuntu/WSL2..."
+	sudo apt-get update
+	sudo apt-get install -y nasm qemu-system-x86 gcc-multilib build-essential gdb
+endif
+
+.PHONY: all run debug gdb-debug clean setup
