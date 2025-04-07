@@ -25,10 +25,6 @@ ls2_16:
     mov cl, 2         ; sector 2 (1-based index, so 2 means second sector)
     mov dh, 0         ; head 0
 
-    ; sanity check
-    cmp dl, 0         ; check dl (drive number)
-    jne .not_floppy
-
 
     int 0x13          ; call BIOS interrupt to read the sector
     jc .disk_error    ; if carry flag is set, there was an error
