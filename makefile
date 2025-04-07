@@ -32,10 +32,20 @@ $(OUT_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR)/include -c $< -o $@
 
+# Rule to compile .asm files to .o files
+$(OUT_DIR)/kernel/%.o: $(KERNEL_DIR)/%.asm
+	@mkdir -p $(dir $@)
+	$(ASM) -f elf32 $< -o $@
+
+# Find all .asm files in the kernel directory and subdirectories (including deeper levels)
+KERNEL_ASM_SRCS := $(shell find $(KERNEL_DIR) -name "*.asm")
+# Convert .asm filenames to .o filenames in the output directory
+KERNEL_ASM_OBJS := $(patsubst $(KERNEL_DIR)/%.asm,$(OUT_DIR)/kernel/%.o,$(KERNEL_ASM_SRCS))
+
 # Create the kernel binary
-$(OUT_DIR)/kernel.bin: $(KERNEL_OBJS) linker.ld
+$(OUT_DIR)/kernel.bin: $(KERNEL_OBJS) $(KERNEL_ASM_OBJS) linker.ld
 	@mkdir -p $(OUT_DIR)
-	$(LD) $(LDFLAGS) -T linker.ld -o $(OUT_DIR)/kernel.elf $(KERNEL_OBJS)
+	$(LD) $(LDFLAGS) -T linker.ld -o $(OUT_DIR)/kernel.elf $(KERNEL_OBJS) $(KERNEL_ASM_OBJS)
 	objcopy -O binary $(OUT_DIR)/kernel.elf $(OUT_DIR)/kernel.bin
 	@echo "Kernel size: `ls -la $(OUT_DIR)/kernel.bin | awk '{print $$5}'` bytes"
 

@@ -167,4 +167,5 @@ protected_mode_entry:
     rep movsd
     
     ; Jump to kernel entry point (0x100000 as specified in linker.ld)
+    ; Our start function is now at exactly this address due to linker script changes
     jmp KERNEL_PMODE_ADDR
