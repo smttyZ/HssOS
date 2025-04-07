@@ -5,7 +5,9 @@ SECTIONS
     . = 0x100000; /* The kernel is loaded at this address */
     
     .text : {
-        *(.text)     /* Place all code here */
+        /* Place the start function at the very beginning of the text section */
+        *(.text.start)   /* Entry point goes first */
+        *(.text)         /* Then the rest of the code */
     }
     
     .data : {

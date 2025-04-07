@@ -9,6 +9,7 @@ typedef unsigned long long uint64_t;
 
 // Include all kernel subsystem headers
 #include "io.h"
+#include "idt.h"
 
 // VGA text mode colors
 enum vga_color {
