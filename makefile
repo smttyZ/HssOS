@@ -1,88 +1,67 @@
-# Variables
-ASM := nasm
-QEMU := qemu-system-x86_64
-STAGE1_SRC := boot/stage1.asm
-STAGE1_OUT := out/stage1.bin
-KERNEL_SRC := kernel/main.c
-KERNEL_OBJ := out/kernel.o
-KERNEL_BIN := out/kernel.bin
-DISK_IMG := out/disk.img
-BOOTLOADER_SIZE := 512
-DISK_SIZE := 1440K  # Standard floppy size
+ASM = nasm
+CC = gcc
+LD = ld
+OUT_DIR = out
+BOOT_DIR = boot
+KERNEL_DIR = kernel
 
-# OS detection for compiler selection
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    # macOS specific settings
-    CC := x86_64-elf-gcc
-else
-    # Linux (Ubuntu/WSL2) specific settings
-    CC := gcc
-endif
+# Compiler flags for a freestanding kernel
+CFLAGS = -m32 -ffreestanding -fno-pie -nostdlib -nostdinc -fno-builtin \
+         -fno-stack-protector -nostartfiles -nodefaultlibs -Wall -Wextra -O2
 
-# Common compiler flags for both environments
-CFLAGS := -ffreestanding -O0 -g -Wall -Wextra -std=c99 -m32 -fno-pie -nostdlib -fno-stack-protector
+# Linker flags
+LDFLAGS = -m elf_i386 -nostdlib -z max-page-size=0x1000
 
-# Main target
-all: $(DISK_IMG) run
+all: $(OUT_DIR)/floppy.img
 
-# Create output directory if it doesn't exist
-out:
-	mkdir -p out
+$(OUT_DIR)/stage1.bin: $(BOOT_DIR)/stage1.asm
+	@mkdir -p $(OUT_DIR)
+	$(ASM) -f bin $< -o $@
 
-# Assemble bootloader
-$(STAGE1_OUT): $(STAGE1_SRC) | out
-	$(ASM) -f bin $(STAGE1_SRC) -o $(STAGE1_OUT)
+$(OUT_DIR)/stage2.bin: $(BOOT_DIR)/stage2.asm
+	@mkdir -p $(OUT_DIR)
+	$(ASM) -f bin $< -o $@
 
-# Compile the kernel C code
-$(KERNEL_OBJ): $(KERNEL_SRC) | out
-	$(CC) $(CFLAGS) -c $(KERNEL_SRC) -o $(KERNEL_OBJ)
+# Find all .c files in the kernel directory and subdirectories
+KERNEL_SRCS := $(wildcard $(KERNEL_DIR)/*/*.c)
+# Convert .c filenames to .o filenames in the output directory
+KERNEL_OBJS := $(patsubst $(KERNEL_DIR)/%.c,$(OUT_DIR)/kernel/%.o,$(KERNEL_SRCS))
 
-# Link the kernel
-$(KERNEL_BIN): $(KERNEL_OBJ) linker.ld
-	$(CC) -T linker.ld $(CFLAGS) -o $(KERNEL_BIN) $(KERNEL_OBJ)
-	objdump -d $(KERNEL_BIN) > out/kernel.dump
-	objdump -h $(KERNEL_BIN) > out/kernel_headers.dump
+# Rule to compile .c files to .o files
+$(OUT_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR)/include -c $< -o $@
 
-# Create disk image with bootloader and kernel
-$(DISK_IMG): $(STAGE1_OUT) $(KERNEL_BIN)
-	@echo "Creating disk image..."
-	@dd if=/dev/zero of=$(DISK_IMG) bs=512 count=2880
-	@dd if=$(STAGE1_OUT) of=$(DISK_IMG) conv=notrunc
-	@dd if=$(KERNEL_BIN) of=$(DISK_IMG) bs=512 seek=1 conv=notrunc
+# Create the kernel binary
+$(OUT_DIR)/kernel.bin: $(KERNEL_OBJS) linker.ld
+	@mkdir -p $(OUT_DIR)
+	$(LD) $(LDFLAGS) -T linker.ld -o $(OUT_DIR)/kernel.elf $(KERNEL_OBJS)
+	objcopy -O binary $(OUT_DIR)/kernel.elf $(OUT_DIR)/kernel.bin
+	@echo "Kernel size: `ls -la $(OUT_DIR)/kernel.bin | awk '{print $$5}'` bytes"
 
-# Run in QEMU (as floppy)
-run: $(DISK_IMG)
-	@echo "Running HssOS. Press ESC to exit the OS."
-	@echo "If ESC doesn't work, press Ctrl+C or Ctrl+Alt+G to kill QEMU."
-	$(QEMU) -fda $(DISK_IMG) -boot a -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# Create floppy disk image
+$(OUT_DIR)/floppy.img: $(OUT_DIR)/stage1.bin $(OUT_DIR)/stage2.bin $(OUT_DIR)/kernel.bin
+	@mkdir -p $(OUT_DIR)
+	# Create empty floppy image (1.44MB)
+	dd if=/dev/zero of=$@ bs=512 count=2880
+	# Write bootsector (first sector)
+	dd if=$(OUT_DIR)/stage1.bin of=$@ bs=512 count=1 conv=notrunc
+	# Write stage2 (second sector)
+	dd if=$(OUT_DIR)/stage2.bin of=$@ bs=512 seek=1 count=1 conv=notrunc
+	# Write kernel (starting at third sector)
+	dd if=$(OUT_DIR)/kernel.bin of=$@ bs=512 seek=2 conv=notrunc
 
-# Run with debug options (no auto-reset)
-debug: $(DISK_IMG)
-	@echo "Running HssOS in debug mode. Press ESC to exit the OS."
-	@echo "If ESC doesn't work, type 'quit' in the monitor window."
-	$(QEMU) -fda $(DISK_IMG) -boot a -d int,cpu_reset -no-reboot -no-shutdown -monitor stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# Run in QEMU
+run: $(OUT_DIR)/floppy.img
+	qemu-system-i386 -fda $(OUT_DIR)/floppy.img -boot a -serial stdio
 
-# Run with full debug options and GDB server
-gdb-debug: $(DISK_IMG)
-	@echo "Running HssOS with GDB server. Connect with:"
-	@echo "gdb -ex \"target remote localhost:1234\" out/kernel.bin"
-	$(QEMU) -fda $(DISK_IMG) -boot a -d int,cpu_reset -no-reboot -no-shutdown -s -S -monitor stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# Run with debug info in monitor
+debug: $(OUT_DIR)/floppy.img
+	qemu-system-i386 -fda $(OUT_DIR)/floppy.img -boot a -monitor stdio
 
-# Clean build artifacts
+# Run with debug info and GDB server
+debuggdb: $(OUT_DIR)/floppy.img
+	qemu-system-i386 -fda $(OUT_DIR)/floppy.img -boot a -s -S
+
 clean:
-	rm -rf out
-
-# Install dependencies based on the OS
-setup:
-ifeq ($(UNAME_S),Darwin)
-	@echo "Installing dependencies for macOS..."
-	@echo "You need to have brew installed"
-	brew install nasm qemu x86_64-elf-gcc x86_64-elf-binutils
-else
-	@echo "Installing dependencies for Ubuntu/WSL2..."
-	sudo apt-get update
-	sudo apt-get install -y nasm qemu-system-x86 gcc-multilib build-essential gdb
-endif
-
-.PHONY: all run debug gdb-debug clean setup
+	rm -rf $(OUT_DIR)/*
