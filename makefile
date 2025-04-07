@@ -1,62 +1,74 @@
-# Variables
-ASM := nasm
-CC := x86_64-elf-gcc
-CFLAGS := -ffreestanding -O0 -g -Wall -Wextra -std=c99 -m32 -fno-pie
-QEMU := qemu-system-x86_64
-STAGE1_SRC := boot/stage1.asm
-STAGE1_OUT := out/stage1.bin
-KERNEL_SRC := kernel/main.c
-KERNEL_OBJ := out/kernel.o
-KERNEL_BIN := out/kernel.bin
-DISK_IMG := out/disk.img
-BOOTLOADER_SIZE := 512
-DISK_SIZE := 1440K  # Standard floppy size
+ASM ?= nasm
+QEMU ?= qemu-system-i386
+MCOPY ?= mcopy
+NEWFS ?= newfs_msdos
+DD ?= dd
 
-# Main target
-all: $(DISK_IMG) run
+BOOT_DIR=boot
+OUT_DIR=out
 
-# Assemble bootloader
-$(STAGE1_OUT): $(STAGE1_SRC)
-	@mkdir -p out
-	$(ASM) -f bin $(STAGE1_SRC) -o $(STAGE1_OUT)
+# Ensure output directory exists
+always:
+	@mkdir -p $(OUT_DIR)
 
-# Compile the kernel C code
-$(KERNEL_OBJ): $(KERNEL_SRC)
-	$(CC) $(CFLAGS) -c $(KERNEL_SRC) -o $(KERNEL_OBJ)
+# Build floppy
+floppy: $(OUT_DIR)/floppy.img
+$(OUT_DIR)/floppy.img: asm always
+	@echo "Building floppy image..."
+	$(DD) if=/dev/zero of=$(OUT_DIR)/floppy.img bs=512 count=2880 status=none
+	$(NEWFS) -F 12 -f 2880 $(OUT_DIR)/floppy.img
+	@echo "Copying boot binary to floppy image..."
+	$(DD) if=$(OUT_DIR)/boot.bin of=$(OUT_DIR)/floppy.img conv=notrunc
+	$(MCOPY) -i $(OUT_DIR)/floppy.img $(OUT_DIR)/stage1.bin ::/boot.bin
+	$(MCOPY) -i $(OUT_DIR)/floppy.img $(OUT_DIR)/stage2.bin ::/stage2.bin
+	@echo "Floppy image created: $(OUT_DIR)/floppy.img"
 
-# Link the kernel
-$(KERNEL_BIN): $(KERNEL_OBJ)
-	$(CC) -T linker.ld $(CFLAGS) -nostdlib $(KERNEL_OBJ) -o $(KERNEL_BIN)
-	objdump -d $(KERNEL_BIN) > out/kernel.dump
-	objdump -h $(KERNEL_BIN) > out/kernel_headers.dump
+# build asm
+asm: $(BOOT_DIR)/stage1.asm $(BOOT_DIR)/stage2.asm always
+	@mkdir -p $(OUT_DIR)
+	$(ASM) -f bin $(BOOT_DIR)/stage1.asm -o $(OUT_DIR)/stage1.bin
+	$(ASM) -f bin $(BOOT_DIR)/stage2.asm -o $(OUT_DIR)/stage2.bin
+	@echo "Assembly complete: stage1.bin and stage2.bin"
 
-# Create disk image with bootloader and kernel
-$(DISK_IMG): $(STAGE1_OUT) $(KERNEL_BIN)
-	@echo "Creating disk image..."
-	@dd if=/dev/zero of=$(DISK_IMG) bs=512 count=2880
-	@dd if=$(STAGE1_OUT) of=$(DISK_IMG) conv=notrunc
-	@dd if=$(KERNEL_BIN) of=$(DISK_IMG) bs=512 seek=1 conv=notrunc
+# Run in QEMU
+run: $(OUT_DIR)/floppy.img
+	@echo "Running QEMU with the floppy image..."
+	$(QEMU) -fda $(OUT_DIR)/floppy.img -boot a -m 16M
+	@echo "QEMU session ended."
 
-# Run in QEMU (as floppy)
-run: $(DISK_IMG)
-	@echo "Running HssOS. Press ESC to exit the OS."
-	@echo "If ESC doesn't work, press Ctrl+C or Ctrl+Alt+G to kill QEMU."
-	$(QEMU) -fda $(DISK_IMG) -boot a -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# Run in QEMU with logging
+run-log: $(OUT_DIR)/floppy.img
+	@echo "Running QEMU with logging enabled..."
+	$(QEMU) -fda $(OUT_DIR)/floppy.img -boot a -m 16M -d int,mmu,cpu -D $(OUT_DIR)/qemu.log
+	@echo "QEMU session ended. Logs saved to $(OUT_DIR)/qemu.log"
+	@echo "To view logs, use: cat $(OUT_DIR)/qemu.log"
 
-# Run with debug options (no auto-reset)
-debug: $(DISK_IMG)
-	@echo "Running HssOS in debug mode. Press ESC to exit the OS."
-	@echo "If ESC doesn't work, type 'quit' in the monitor window."
-	$(QEMU) -fda $(DISK_IMG) -boot a -d int,cpu_reset -no-reboot -no-shutdown -monitor stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# Run in QEMU with debugging
+run-debug: $(OUT_DIR)/floppy.img
+	@echo "Running QEMU with debugging enabled..."
+	$(QEMU) -fda $(OUT_DIR)/floppy.img -boot a -m 16M -s -S
+	@echo "QEMU session started in debug mode. Connect with gdb using:"
+	@echo "  gdb -ex 'target remote localhost:1234' $(OUT_DIR)/boot.bin"
+	@echo "To continue debugging, use 'c' in gdb."
 
-# Run with full debug options and GDB server
-gdb-debug: $(DISK_IMG)
-	@echo "Running HssOS with GDB server. Connect with:"
-	@echo "gdb -ex \"target remote localhost:1234\" out/kernel.bin"
-	$(QEMU) -fda $(DISK_IMG) -boot a -d int,cpu_reset -no-reboot -no-shutdown -s -S -monitor stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
-
-# Clean build artifacts
+# Clean up generated files
 clean:
-	rm -rf out $(DISK_IMG)
+	@echo "Cleaning up generated files..."
+	rm -rf $(OUT_DIR)/*.img $(OUT_DIR)/*.bin
+	@echo "Clean up complete."
 
-.PHONY: all run debug gdb-debug clean
+# Help message
+help:
+	@echo "Usage:"
+	@echo "  make floppy  - Build the floppy image."
+	@echo "  make asm     - Assemble the boot code to binary."
+	@echo "  make clean   - Remove generated files."
+	@echo "  make help    - Show this help message."
+	@echo ""
+	@echo "Note: Ensure you have nasm installed to build the assembly code."
+	@echo "Make sure 'nasm', 'qemu', 'mtools', and 'newfs_msdos' are installed on your system."
+	@echo "On macOS, use Homebrew: brew install nasm qemu mtools"
+	@echo "On Ubuntu, use APT: sudo apt install nasm qemu-system-x86 mtools dosfstools"
+
+.PHONY: all floppy asm run run-log run-debug clean help always
+.DEFAULT_GOAL := help
