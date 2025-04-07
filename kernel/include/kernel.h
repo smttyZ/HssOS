@@ -1,14 +1,14 @@
 #ifndef KERNEL_H
 #define KERNEL_H
 
-// Include all kernel subsystem headers
-#include "io.h"
-
 // Define common kernel types and structures here
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 typedef unsigned long long uint64_t;
+
+// Include all kernel subsystem headers
+#include "io.h"
 
 // VGA text mode colors
 enum vga_color {

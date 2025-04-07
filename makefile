@@ -53,7 +53,7 @@ $(OUT_DIR)/floppy.img: $(OUT_DIR)/stage1.bin $(OUT_DIR)/stage2.bin $(OUT_DIR)/ke
 
 # Run in QEMU
 run: $(OUT_DIR)/floppy.img
-	qemu-system-i386 -fda $(OUT_DIR)/floppy.img -boot a
+	qemu-system-i386 -fda $(OUT_DIR)/floppy.img -boot a -serial stdio
 
 # Run with debug info in monitor
 debug: $(OUT_DIR)/floppy.img
