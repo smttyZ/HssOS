@@ -1,10 +1,10 @@
-# 🧠 Custom OS Memory Map Cheat Sheet (x86, BIOS Boot)
+# Henry's Secure Server OS Memory Map Cheat Sheet (x86, BIOS Boot)
 
 _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## 🪛 Real Mode Memory (First 1MB)
+## Real Mode Memory (First 1MB)
 
 | Memory Range             | Size (Hex) | Size (KB) | Description                                      |
 |--------------------------|------------|-----------|--------------------------------------------------|
@@ -22,7 +22,7 @@ _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## 🔐 Protected Mode Memory (1MB+)
+## Protected Mode Memory (1MB+)
 
 | Memory Range             | Size       | Description                                      |
 |--------------------------|------------|--------------------------------------------------|
@@ -36,7 +36,7 @@ _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## 📺 Memory-Mapped I/O (MMIO)
+## Memory-Mapped I/O (MMIO)
 
 | Memory Range             | Description                                      |
 |--------------------------|--------------------------------------------------|
@@ -48,7 +48,7 @@ _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## 🧩 Memory Management Structures
+## Memory Management Structures
 
 | Structure                | Description                                      |
 |--------------------------|--------------------------------------------------|
@@ -58,7 +58,7 @@ _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## ⚙️ Boot Process Flow
+## Boot Process Flow
 
 1. **BIOS** loads Stage 1 bootloader at `0x7C00`
 2. **Stage 1**:
@@ -73,7 +73,7 @@ _A clear overview of memory layout, boot process, and kernel placement._
 
 ---
 
-## 🧠 Virtual Memory (Future Plan)
+## Virtual Memory (Future Plan)
 
 _Not yet implemented, but planned structure:_
 
@@ -93,5 +93,5 @@ _Not yet implemented, but planned structure:_
 
 ---
 
-📝 Last updated: April 2025  
+📝 Last updated: April 8 2025  
 🛠 Author: Henry  
